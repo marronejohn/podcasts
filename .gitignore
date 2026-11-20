@@ -1,0 +1,12 @@
+classes/
+dex/
+dexout/
+gen/
+*.apk
+*.idsig
+res.zip
+unsigned.apk
+out.apk
+aligned.apk
+*.keystore
+*.jks
