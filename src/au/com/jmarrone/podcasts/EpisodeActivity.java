@@ -25,11 +25,22 @@ import java.util.Locale;
 public class EpisodeActivity extends Activity {
     public static final String SHOW_TITLE = "title";
     public static final String SHOW_URL = "url";
+    public static final float[] SPEEDS = {0.75f, 1.0f, 1.25f, 1.5f, 2.0f};
     private ArrayList<Episode> eps;
     private EpAdapter adapter;
     private Handler h = new Handler();
     private String showTitle, showUrl, slug;
     private int playingPos = -1;
+
+    // keeps the "time remaining" line fresh while the screen is open
+    private Runnable uiTick = new Runnable() {
+        public void run() {
+            SharedPreferences sp = getSharedPreferences(PlaybackService.PREFS, MODE_PRIVATE);
+            String st = sp.getString("np_state", "stopped");
+            if ("playing".equals(st) || "paused".equals(st)) adapter.notifyDataSetChanged();
+            h.postDelayed(this, 5000);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle b) {
@@ -52,6 +63,8 @@ public class EpisodeActivity extends Activity {
                 final boolean active = !"stopped".equals(sp.getString("np_state", "stopped"));
                 java.util.List<String> opts = new ArrayList<String>();
                 opts.add("Play");
+                if (active) opts.add("Skip forward 30 sec");
+                if (active) opts.add("Skip back 30 sec");
                 if (active) opts.add("Stop playback");
                 if (e.local != null) opts.add("Delete downloaded file");
                 new AlertDialog.Builder(EpisodeActivity.this)
@@ -60,6 +73,8 @@ public class EpisodeActivity extends Activity {
                         public void onClick(DialogInterface d, int w) {
                             String which = opts.get(w);
                             if ("Play".equals(which)) tap(pos);
+                            else if ("Skip forward 30 sec".equals(which)) sendSkip(30);
+                            else if ("Skip back 30 sec".equals(which)) sendSkip(-30);
                             else if ("Stop playback".equals(which)) {
                                 Intent i = new Intent(EpisodeActivity.this, PlaybackService.class);
                                 i.setAction(PlaybackService.ACTION_STOP);
@@ -75,6 +90,27 @@ public class EpisodeActivity extends Activity {
             }
         });
         load();
+    }
+
+    private void sendSkip(int sec) {
+        Intent i = new Intent(this, PlaybackService.class);
+        i.setAction(PlaybackService.ACTION_SKIP);
+        i.putExtra(PlaybackService.SKIP, sec);
+        startService(i);
+        adapter.notifyDataSetChanged();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        load();
+        h.post(uiTick);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        h.removeCallbacks(uiTick);
     }
 
     private void load() {
@@ -166,7 +202,20 @@ public class EpisodeActivity extends Activity {
     public boolean onCreateOptionsMenu(Menu menu) {
         menu.add(0, 1, 0, "Download all not-yet-saved");
         menu.add(0, 2, 0, "Refresh from feed now");
+        float sp = getSharedPreferences(PlaybackService.PREFS, MODE_PRIVATE).getFloat("speed", 1.0f);
+        menu.add(0, 3, 0, "Playback speed: " + speedLabel(sp) + "x");
+        menu.add(0, 4, 0, "Sleep timer: " + sleepLabel());
         return true;
+    }
+
+    private static String speedLabel(float sp) {
+        if (sp == (long) sp) return String.valueOf((long) sp) + ".0";
+        return String.valueOf(sp);
+    }
+
+    private String sleepLabel() {
+        int m = Pod.prefs(this).getInt("sleepMinutes", 0);
+        return m <= 0 ? "off" : (m + " min");
     }
 
     @Override
@@ -180,6 +229,35 @@ public class EpisodeActivity extends Activity {
                     h.post(new Runnable() { public void run() { load(); } });
                 }
             }).start();
+            return true;
+        }
+        if (item.getItemId() == 3) {
+            // cycle 0.75 -> 1.0 -> 1.25 -> 1.5 -> 2.0 -> 0.75
+            SharedPreferences sp = getSharedPreferences(PlaybackService.PREFS, MODE_PRIVATE);
+            float cur = sp.getFloat("speed", 1.0f);
+            int idx = 1;
+            for (int i = 0; i < SPEEDS.length; i++) if (SPEEDS[i] == cur) { idx = (i + 1) % SPEEDS.length; break; }
+            float next = SPEEDS[idx];
+            sp.edit().putFloat("speed", next).commit();
+            Intent i = new Intent(this, PlaybackService.class);
+            i.setAction(PlaybackService.ACTION_SPEED);
+            i.putExtra(PlaybackService.SPEEDV, next);
+            startService(i);
+            invalidateOptionsMenu();
+            Toast.makeText(this, "Speed " + speedLabel(next) + "x", Toast.LENGTH_SHORT).show();
+            return true;
+        }
+        if (item.getItemId() == 4) {
+            // cycle off -> 30 -> 60 -> 90 -> off
+            int m = Pod.prefs(this).getInt("sleepMinutes", 0);
+            int next = m <= 0 ? 30 : (m == 30 ? 60 : (m == 60 ? 90 : 0));
+            Pod.prefs(this).edit().putInt("sleepMinutes", next).commit();
+            Intent i = new Intent(this, PlaybackService.class);
+            i.setAction(PlaybackService.ACTION_SLEEP);
+            i.putExtra(PlaybackService.SLEEP, next);
+            startService(i);
+            invalidateOptionsMenu();
+            Toast.makeText(this, next <= 0 ? "Sleep timer off" : "Sleep timer " + next + " min", Toast.LENGTH_SHORT).show();
             return true;
         }
         return super.onOptionsItemSelected(item);
@@ -206,6 +284,7 @@ public class EpisodeActivity extends Activity {
             TextView t1 = (TextView) cv.findViewById(1);
             TextView t2 = (TextView) cv.findViewById(2);
             String mark = "";
+            String live = "";
             if (e.local != null) {
                 SharedPreferences sp = getSharedPreferences(PlaybackService.PREFS, MODE_PRIVATE);
                 String npPath = sp.getString("np_path", "");
@@ -214,16 +293,20 @@ public class EpisodeActivity extends Activity {
                 if (fpath.equals(npPath)) {
                     if ("playing".equals(st)) mark = "\u25B6 ";
                     else if ("paused".equals(st)) mark = "\u23F8 ";
+                    if (!"stopped".equals(st)) {
+                        long dur = sp.getLong("dur:" + npPath, 0);
+                        long pos = sp.getLong("pos:" + npPath, 0);
+                        String rem = PlaybackService.remainingFrom(dur, pos);
+                        if (rem.length() > 0) live = "  |  " + rem + " left";
+                    }
                 }
             }
             t1.setText(mark + e.title);
             String when = e.dateMs > 0 ? new SimpleDateFormat("EEE d MMM yyyy", Locale.ENGLISH).format(new Date(e.dateMs)) : e.date;
-            t2.setText(when + (e.local != null ? "  |  saved - tap to play, tap again to pause" : "  |  not saved"));
+            String dur = e.seconds > 0 ? "  |  " + ((e.seconds + 30) / 60) + " min" : "";
+            t2.setText(when + dur + live + (e.local != null && mark.length() == 0 ? "  |  saved - tap to play, tap again to pause" : (e.local == null ? "  |  not saved" : "")));
             t2.setTextColor(e.local != null ? 0xff1b7a2b : 0xff777777);
             return cv;
         }
     }
-
-    @Override
-    protected void onResume() { super.onResume(); load(); }
 }

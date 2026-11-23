@@ -19,13 +19,14 @@ public class FeedParser {
         int ev = p.getEventType();
         String channelTitleDone = "no";
         boolean inItem = false;
-        String curTitle = null, curDate = null, curUrl = null;
+        String curTitle = null, curDate = null, curUrl = null, curDur = null;
         while (ev != XmlPullParser.END_DOCUMENT) {
             if (ev == XmlPullParser.START_TAG) {
                 String name = p.getName().toLowerCase(Locale.US);
-                if ("item".equals(name)) { inItem = true; curTitle = null; curDate = null; curUrl = null; }
+                if ("item".equals(name)) { inItem = true; curTitle = null; curDate = null; curUrl = null; curDur = null; }
                 else if ("title".equals(name)) { String t = readText(p); if (!inItem && channelTitleDone.equals("no")) { fp.feedTitle = t; channelTitleDone = "yes"; } else if (inItem) curTitle = t; }
                 else if ("pubdate".equals(name) || "published".equals(name)) { if (inItem) curDate = readText(p); }
+                else if ("duration".equals(name)) { if (inItem) curDur = readText(p); }
                 else if ("enclosure".equals(name)) {
                     if (inItem) {
                         String u = p.getAttributeValue(null, "url");
@@ -43,6 +44,7 @@ public class FeedParser {
                         e.date = curDate == null ? "" : curDate.trim();
                         e.dateMs = parseDate(e.date);
                         e.url = curUrl.trim();
+                        e.seconds = parseDuration(curDur);
                         fp.items.add(e);
                     }
                 }
@@ -50,6 +52,24 @@ public class FeedParser {
             ev = p.next();
         }
         return fp;
+    }
+
+    // itunes:duration may be "3600" (seconds) or "H:MM:SS" / "MM:SS"
+    public static int parseDuration(String s) {
+        if (s == null) return 0;
+        s = s.trim();
+        if (s.length() == 0) return 0;
+        try {
+            if (s.contains(":")) {
+                String[] b = s.split(":");
+                int v = 0;
+                for (int i = 0; i < b.length; i++) {
+                    try { v = v * 60 + Integer.parseInt(b[i].trim()); } catch (Exception e) { v = v * 60; }
+                }
+                return v;
+            }
+            return (int) Long.parseLong(s);
+        } catch (Throwable t) { return 0; }
     }
 
     private static String readText(XmlPullParser p) throws Exception {
