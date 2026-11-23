@@ -7,6 +7,15 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.graphics.PixelFormat;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Bundle;
+import android.text.TextUtils;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.WindowManager;
+import android.widget.TextView;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
@@ -28,6 +37,7 @@ public class PlaybackService extends Service {
     public static final String ACTION_SKIP = "au.com.jmarrone.podcasts.SKIP";
     public static final String ACTION_SPEED = "au.com.jmarrone.podcasts.SPEED";
     public static final String ACTION_SLEEP = "au.com.jmarrone.podcasts.SLEEP";
+    public static final String ACTION_MINI = "au.com.jmarrone.podcasts.MINI";
     public static final String PATH = "path";
     public static final String TITLE = "title";
     public static final String SKIP = "skip";
@@ -41,6 +51,13 @@ public class PlaybackService extends Service {
     private boolean transientLoss = false;   // lost focus to a short sound -> auto-resume when it's free
     private AudioManager am;
     private AudioFocusRequest afr;
+    private android.widget.LinearLayout mini = null;
+    private WindowManager wm;
+    private WindowManager.LayoutParams miniParams;
+    private boolean miniDrag = false;
+    private float miniDownRawX, miniDownRawY;
+    private int miniStartX, miniStartY;
+    private Runnable miniLongPress;
     private Handler h = new Handler();
     private Runnable saver = new Runnable() {
         public void run() { savePos(); h.postDelayed(this, 5000); }
@@ -198,6 +215,7 @@ public class PlaybackService extends Service {
                 startForeground(1, n);
             }
             fg = true;
+            syncMini();
         } catch (Throwable t) { }
     }
 
@@ -223,6 +241,141 @@ public class PlaybackService extends Service {
             }
             return remainingFrom(dur, pos);
         } catch (Throwable t) { return ""; }
+    }
+
+    // ---- floating mini-player (over other apps; needs "Display over other apps" once) ----
+
+    private SharedPreferences appPrefs() { return Pod.prefs(this); }
+
+    private void syncMini() {
+        try {
+            boolean want = appPrefs().getBoolean("miniPlayer", false);
+            if (want && mp != null) {
+                if (mini == null) createMini();
+                if (mini != null) updateMiniText();
+            } else {
+                removeMini();
+            }
+        } catch (Throwable t) { }
+    }
+
+    private void createMini() {
+        try {
+            wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+            float d = getResources().getDisplayMetrics().density;
+            int pad = (int) (d * 9);
+            mini = new android.widget.LinearLayout(this);
+            mini.setOrientation(android.widget.LinearLayout.VERTICAL);
+            mini.setPadding(pad, pad / 2, pad, pad / 2);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(0xdd20242b);
+            bg.setCornerRadius(d * 12);
+            mini.setBackground(bg);
+            TextView t1 = new TextView(this);
+            t1.setId(11); t1.setTextColor(0xffffffff); t1.setTextSize(12);
+            t1.setMaxLines(1); t1.setEllipsize(TextUtils.TruncateAt.END);
+            t1.setMaxWidth((int) (d * 190));
+            TextView t2 = new TextView(this);
+            t2.setId(12); t2.setTextColor(0xffb8c0cc); t2.setTextSize(10);
+            mini.addView(t1); mini.addView(t2);
+            miniParams = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                Build.VERSION.SDK_INT >= 26 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                                            : WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT);
+            miniParams.gravity = Gravity.TOP | Gravity.START;
+            miniParams.x = appPrefs().getInt("miniX", 40);
+            miniParams.y = appPrefs().getInt("miniY", 160);
+            mini.setOnTouchListener(new View.OnTouchListener() {
+                public boolean onTouch(View v, MotionEvent ev) {
+                    switch (ev.getActionMasked()) {
+                        case MotionEvent.ACTION_DOWN:
+                            miniDownRawX = ev.getRawX(); miniDownRawY = ev.getRawY();
+                            miniStartX = miniParams.x; miniStartY = miniParams.y;
+                            miniDrag = false;
+                            scheduleMiniLongPress();
+                            return true;
+                        case MotionEvent.ACTION_MOVE:
+                            float dx = ev.getRawX() - miniDownRawX, dy = ev.getRawY() - miniDownRawY;
+                            if (!miniDrag && (Math.abs(dx) > 12 || Math.abs(dy) > 12)) {
+                                miniDrag = true;
+                                cancelMiniLongPress();
+                            }
+                            if (miniDrag) {
+                                miniParams.x = Math.max(0, miniStartX + (int) dx);
+                                miniParams.y = Math.max(0, miniStartY + (int) dy);
+                                try { wm.updateViewLayout(mini, miniParams); } catch (Throwable t) { }
+                            }
+                            return true;
+                        case MotionEvent.ACTION_UP:
+                        case MotionEvent.ACTION_CANCEL:
+                            cancelMiniLongPress();
+                            if (!miniDrag) {
+                                togglePlayPause();
+                            } else {
+                                appPrefs().edit().putInt("miniX", miniParams.x).putInt("miniY", miniParams.y).commit();
+                            }
+                            return true;
+                    }
+                    return false;
+                }
+            });
+            wm.addView(mini, miniParams);
+        } catch (Throwable t) {
+            mini = null;
+        }
+    }
+
+    private void scheduleMiniLongPress() {
+        cancelMiniLongPress();
+        miniLongPress = new Runnable() {
+            public void run() {
+                appPrefs().edit().putBoolean("miniPlayer", false).commit();
+                removeMini();
+                try { android.widget.Toast.makeText(PlaybackService.this, "Mini-player off", android.widget.Toast.LENGTH_SHORT).show(); } catch (Throwable t) { }
+            }
+        };
+        h.postDelayed(miniLongPress, 700);
+    }
+
+    private void cancelMiniLongPress() {
+        if (miniLongPress != null) { h.removeCallbacks(miniLongPress); miniLongPress = null; }
+    }
+
+    private void togglePlayPause() {
+        try {
+            if (mp == null) return;
+            if (mp.isPlaying()) {
+                mp.pause(); savePos(); setState("paused");
+            } else {
+                requestFocus();
+                mp.start(); applySpeed(); setState("playing");
+                h.removeCallbacks(saver); h.postDelayed(saver, 5000);
+                h.removeCallbacks(tick); h.postDelayed(tick, 1000);
+            }
+            goFg(prefs().getString("np_title", ""));
+        } catch (Throwable t) { }
+    }
+
+    private void updateMiniText() {
+        try {
+            if (mini == null) return;
+            SharedPreferences p = prefs();
+            TextView t1 = (TextView) mini.findViewById(11);
+            TextView t2 = (TextView) mini.findViewById(12);
+            String np = p.getString("np_title", "");
+            t1.setText(np == null || np.length() == 0 ? "Podcasts" : np);
+            float sp = p.getFloat("speed", 1.0f);
+            String speed = sp != 1.0f ? (" " + sp + "x") : "";
+            t2.setText((isPlayingSafe() ? "Playing" : "Paused") + (remainingText().length() > 0 ? " \u00b7 " + remainingText() + " left" : "") + speed);
+        } catch (Throwable t) { }
+    }
+
+    private void removeMini() {
+        try { if (mini != null && wm != null) wm.removeView(mini); } catch (Throwable t) { }
+        mini = null;
+        cancelMiniLongPress();
     }
 
     private void endFg() {
@@ -285,6 +438,7 @@ public class PlaybackService extends Service {
             }
             return START_STICKY;
         }
+        if (ACTION_MINI.equals(a)) { syncMini(); return START_STICKY; }
         if (ACTION_PLAY.equals(a)) {
             String path = intent.getStringExtra(PATH);
             String title = intent.getStringExtra(TITLE);
@@ -306,7 +460,8 @@ public class PlaybackService extends Service {
                 p.edit().putString("np_path", path).putString("np_title", title == null ? "" : title).putString("np_state", "playing").commit();
                 mp.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
                     public void onCompletion(MediaPlayer m) {
-                        try { prefs().edit().putLong("pos:" + curPath, 0).putString("np_state", "stopped").commit(); } catch (Throwable t) { }
+                        try { prefs().edit().putLong("pos:" + curPath, 0).putString("np_state", "stopped").putBoolean("done:" + curPath, true).commit(); } catch (Throwable t) { }
+                        removeMini();
                         h.removeCallbacks(saver); h.removeCallbacks(tick); h.removeCallbacks(sleeper);
                         abandonFocus();
                         try { if (mp != null) { mp.release(); } } catch (Throwable t) { }
@@ -350,6 +505,7 @@ public class PlaybackService extends Service {
         try { if (wl != null && wl.isHeld()) wl.release(); } catch (Throwable t) { }
         wl = null;
         endFg();
+        removeMini();
         try { prefs().edit().putString("np_state", "stopped").commit(); } catch (Throwable t) { }
     }
 }

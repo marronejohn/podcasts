@@ -5,6 +5,8 @@ import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
+import android.provider.Settings;
 import android.os.Bundle;
 import android.os.Handler;
 import android.view.Menu;
@@ -205,6 +207,7 @@ public class EpisodeActivity extends Activity {
         float sp = getSharedPreferences(PlaybackService.PREFS, MODE_PRIVATE).getFloat("speed", 1.0f);
         menu.add(0, 3, 0, "Playback speed: " + speedLabel(sp) + "x");
         menu.add(0, 4, 0, "Sleep timer: " + sleepLabel());
+        menu.add(0, 5, 0, "Floating mini-player: " + (Pod.prefs(this).getBoolean("miniPlayer", false) ? "ON" : "OFF"));
         return true;
     }
 
@@ -260,6 +263,25 @@ public class EpisodeActivity extends Activity {
             Toast.makeText(this, next <= 0 ? "Sleep timer off" : "Sleep timer " + next + " min", Toast.LENGTH_SHORT).show();
             return true;
         }
+        if (item.getItemId() == 5) {
+            boolean now = !Pod.prefs(this).getBoolean("miniPlayer", false);
+            if (now && !Settings.canDrawOverlays(this)) {
+                Toast.makeText(this, "One-time setup: on the next screen allow 'Display over other apps' for Podcasts, then come back and switch the mini-player on.", Toast.LENGTH_LONG).show();
+                try {
+                    startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName())));
+                } catch (Throwable t) {
+                    Toast.makeText(this, "Couldn't open the settings screen", Toast.LENGTH_SHORT).show();
+                }
+                return true;
+            }
+            Pod.prefs(this).edit().putBoolean("miniPlayer", now).commit();
+            Intent i = new Intent(this, PlaybackService.class);
+            i.setAction(PlaybackService.ACTION_MINI);
+            startService(i);
+            invalidateOptionsMenu();
+            Toast.makeText(this, now ? "Mini-player on while something is playing" : "Mini-player off", Toast.LENGTH_SHORT).show();
+            return true;
+        }
         return super.onOptionsItemSelected(item);
     }
 
@@ -283,13 +305,14 @@ public class EpisodeActivity extends Activity {
             Episode e = eps.get(p);
             TextView t1 = (TextView) cv.findViewById(1);
             TextView t2 = (TextView) cv.findViewById(2);
+            SharedPreferences sp = getSharedPreferences(PlaybackService.PREFS, MODE_PRIVATE);
             String mark = "";
             String live = "";
+            String played = "";
             if (e.local != null) {
-                SharedPreferences sp = getSharedPreferences(PlaybackService.PREFS, MODE_PRIVATE);
+                String fpath = new File(Pod.audioDir(EpisodeActivity.this), e.local).getAbsolutePath();
                 String npPath = sp.getString("np_path", "");
                 String st = sp.getString("np_state", "stopped");
-                String fpath = new File(Pod.audioDir(EpisodeActivity.this), e.local).getAbsolutePath();
                 if (fpath.equals(npPath)) {
                     if ("playing".equals(st)) mark = "\u25B6 ";
                     else if ("paused".equals(st)) mark = "\u23F8 ";
@@ -300,12 +323,15 @@ public class EpisodeActivity extends Activity {
                         if (rem.length() > 0) live = "  |  " + rem + " left";
                     }
                 }
+                if (sp.getBoolean("done:" + fpath, false)) played = "  |  played";
             }
             t1.setText(mark + e.title);
             String when = e.dateMs > 0 ? new SimpleDateFormat("EEE d MMM yyyy", Locale.ENGLISH).format(new Date(e.dateMs)) : e.date;
             String dur = e.seconds > 0 ? "  |  " + ((e.seconds + 30) / 60) + " min" : "";
-            t2.setText(when + dur + live + (e.local != null && mark.length() == 0 ? "  |  saved - tap to play, tap again to pause" : (e.local == null ? "  |  not saved" : "")));
-            t2.setTextColor(e.local != null ? 0xff1b7a2b : 0xff777777);
+            String tail = e.local == null ? "  |  not saved"
+                : (played.length() > 0 ? played : (mark.length() == 0 ? "  |  saved - tap to play, tap again to pause" : ""));
+            t2.setText(when + dur + live + tail);
+            t2.setTextColor(e.local != null ? (played.length() > 0 ? 0xff4a6fb0 : 0xff1b7a2b) : 0xff777777);
             return cv;
         }
     }
