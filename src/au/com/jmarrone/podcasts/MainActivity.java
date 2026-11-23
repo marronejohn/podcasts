@@ -197,10 +197,28 @@ public class MainActivity extends Activity {
             t1.setText(s[0]);
             String last = Pod.prefs(MainActivity.this).getString("lastSync", "");
             int n = 0;
-            for (Episode e : Sync.readIndex(MainActivity.this, Pod.slug(s[0]))) if (e.local != null) n++;
-            t2.setText(s[1] + "  |  " + n + " downloaded" + (last.length() > 0 ? "  |  last sync: " + last : ""));
+            java.util.ArrayList<Integer> durs = new java.util.ArrayList<Integer>();
+            for (Episode e : Sync.readIndex(MainActivity.this, Pod.slug(s[0]))) {
+                if (e.local != null) n++;
+                if (e.seconds > 0) durs.add(e.seconds);
+            }
+            String dur = "";
+            if (durs.size() > 0) {
+                java.util.Collections.sort(durs);
+                int med = durs.get(durs.size() / 2);
+                dur = "  |  ~" + durLabel(med) + " episodes";
+            }
+            t2.setText(s[1] + dur + "  |  " + n + " downloaded" + (last.length() > 0 ? "  |  last sync: " + last : ""));
             return cv;
         }
+    }
+
+    private static String durLabel(int secs) {
+        if (secs >= 5400) {
+            long h = secs / 3600, m = (secs % 3600) / 60;
+            return (m == 0 ? h + " hr" : h + "h " + m + "m");
+        }
+        return ((secs + 30) / 60) + " min";
     }
 
     // tiny static import holder so the file has no extra dependency
