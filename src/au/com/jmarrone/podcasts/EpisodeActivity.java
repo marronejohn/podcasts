@@ -179,6 +179,7 @@ public class EpisodeActivity extends Activity {
                     i.setAction(PlaybackService.ACTION_PLAY);
                     i.putExtra(PlaybackService.PATH, path);
                     i.putExtra(PlaybackService.TITLE, showTitle + " - " + e.title);
+                i.putExtra(PlaybackService.FEED, showTitle);
                 }
                 startService(i);
                 playingPos = pos;

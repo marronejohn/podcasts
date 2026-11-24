@@ -38,6 +38,9 @@ public class PlaybackService extends Service {
     public static final String ACTION_SPEED = "au.com.jmarrone.podcasts.SPEED";
     public static final String ACTION_SLEEP = "au.com.jmarrone.podcasts.SLEEP";
     public static final String ACTION_MINI = "au.com.jmarrone.podcasts.MINI";
+    public static final String ACTION_RESTORE = "au.com.jmarrone.podcasts.RESTORE";
+    public static final String FEED = "feed";
+    public static volatile boolean alive = false;
     public static final String PATH = "path";
     public static final String TITLE = "title";
     public static final String SKIP = "skip";
@@ -76,6 +79,12 @@ public class PlaybackService extends Service {
     private Runnable sleeper = new Runnable() {
         public void run() { pauseNow(); }
     };
+    // keeps the floating bubble's "minutes remaining" counting down live
+    private Runnable miniTick = new Runnable() {
+        public void run() {
+            if (mini != null && mp != null && isPlayingSafe()) { updateMiniText(); h.postDelayed(this, 1000); }
+        }
+    };
 
     private BroadcastReceiver noisy = new BroadcastReceiver() {
         public void onReceive(Context c, Intent i) {
@@ -89,6 +98,7 @@ public class PlaybackService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        alive = true;
         am = (AudioManager) getSystemService(AUDIO_SERVICE);
         try {
             registerReceiver(noisy, new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
@@ -97,6 +107,7 @@ public class PlaybackService extends Service {
 
     @Override
     public void onDestroy() {
+        alive = false;
         try { unregisterReceiver(noisy); } catch (Throwable t) { }
         stop();
         super.onDestroy();
@@ -119,8 +130,7 @@ public class PlaybackService extends Service {
                     transientLoss = false;
                     try {
                         mp.start(); setState("playing");
-                        h.removeCallbacks(saver); h.postDelayed(saver, 5000);
-                        h.removeCallbacks(tick); h.postDelayed(tick, 1000);
+                        startTicks();
                         goFg(prefs().getString("np_title", ""));
                     } catch (Throwable t) { }
                 }
@@ -250,7 +260,8 @@ public class PlaybackService extends Service {
     private void syncMini() {
         try {
             boolean want = appPrefs().getBoolean("miniPlayer", false);
-            if (want && mp != null) {
+            boolean hasLast = prefs().getString("np_title", "").length() > 0;
+            if (want && (mp != null || hasLast)) {
                 if (mini == null) createMini();
                 if (mini != null) updateMiniText();
             } else {
@@ -273,11 +284,16 @@ public class PlaybackService extends Service {
             mini.setBackground(bg);
             TextView t1 = new TextView(this);
             t1.setId(11); t1.setTextColor(0xffffffff); t1.setTextSize(12);
+            t1.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
             t1.setMaxLines(1); t1.setEllipsize(TextUtils.TruncateAt.END);
             t1.setMaxWidth((int) (d * 190));
             TextView t2 = new TextView(this);
-            t2.setId(12); t2.setTextColor(0xffb8c0cc); t2.setTextSize(10);
-            mini.addView(t1); mini.addView(t2);
+            t2.setId(13); t2.setTextColor(0xffb8c0cc); t2.setTextSize(10);
+            t2.setMaxLines(1); t2.setEllipsize(TextUtils.TruncateAt.END);
+            t2.setMaxWidth((int) (d * 190));
+            TextView t3 = new TextView(this);
+            t3.setId(12); t3.setTextColor(0xffe8ecf2); t3.setTextSize(10);
+            mini.addView(t1); mini.addView(t2); mini.addView(t3);
             miniParams = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
                 Build.VERSION.SDK_INT >= 26 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -345,14 +361,20 @@ public class PlaybackService extends Service {
 
     private void togglePlayPause() {
         try {
-            if (mp == null) return;
+            if (mp == null) {
+                SharedPreferences sp = prefs();
+                String path = sp.getString("np_path", "");
+                if (path.length() == 0) return;
+                startService(new Intent(this, PlaybackService.class).setAction(ACTION_PLAY)
+                    .putExtra(PATH, path).putExtra(TITLE, sp.getString("np_title", "")).putExtra(FEED, sp.getString("np_feed", "")));
+                return;
+            }
             if (mp.isPlaying()) {
                 mp.pause(); savePos(); setState("paused");
             } else {
                 requestFocus();
                 mp.start(); applySpeed(); setState("playing");
-                h.removeCallbacks(saver); h.postDelayed(saver, 5000);
-                h.removeCallbacks(tick); h.postDelayed(tick, 1000);
+                startTicks();
             }
             goFg(prefs().getString("np_title", ""));
         } catch (Throwable t) { }
@@ -363,12 +385,17 @@ public class PlaybackService extends Service {
             if (mini == null) return;
             SharedPreferences p = prefs();
             TextView t1 = (TextView) mini.findViewById(11);
-            TextView t2 = (TextView) mini.findViewById(12);
+            TextView t2 = (TextView) mini.findViewById(13);
+            TextView t3 = (TextView) mini.findViewById(12);
+            String fd = p.getString("np_feed", "");
+            t1.setText(fd == null || fd.length() == 0 ? "Podcasts" : fd);
             String np = p.getString("np_title", "");
-            t1.setText(np == null || np.length() == 0 ? "Podcasts" : np);
+            if (np != null && fd.length() > 0 && np.startsWith(fd + " - ")) np = np.substring(fd.length() + 3);
+            t2.setText(np == null || np.length() == 0 ? " " : np);
             float sp = p.getFloat("speed", 1.0f);
             String speed = sp != 1.0f ? (" " + sp + "x") : "";
-            t2.setText((isPlayingSafe() ? "Playing" : "Paused") + (remainingText().length() > 0 ? " \u00b7 " + remainingText() + " left" : "") + speed);
+            String lbl = isPlayingSafe() ? "Playing" + speed : (mp != null ? "Paused" + speed : "Paused - tap to resume");
+            t3.setText(lbl + (remainingText().length() > 0 ? " \u00b7 " + remainingText() + " left" : ""));
         } catch (Throwable t) { }
     }
 
@@ -387,7 +414,7 @@ public class PlaybackService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null) { stop(); stopSelf(); return START_NOT_STICKY; }
         String a = intent.getAction();
-        if (ACTION_STOP.equals(a)) { stop(); stopSelf(); return START_NOT_STICKY; }
+        if (ACTION_STOP.equals(a)) { stop(); setState("stopped"); stopSelf(); return START_NOT_STICKY; }
         if (ACTION_PAUSE.equals(a)) {
             try { if (mp != null && mp.isPlaying()) { mp.pause(); savePos(); setState("paused"); h.removeCallbacks(saver); goFg(prefs().getString("np_title", "")); } } catch (Throwable t) { }
             return START_STICKY;
@@ -397,8 +424,7 @@ public class PlaybackService extends Service {
                 if (mp != null && !mp.isPlaying()) {
                     requestFocus();
                     mp.start(); applySpeed(); setState("playing");
-                    h.removeCallbacks(saver); h.postDelayed(saver, 5000);
-                    h.removeCallbacks(tick); h.postDelayed(tick, 1000);
+                    startTicks();
                     goFg(prefs().getString("np_title", ""));
                 }
             } catch (Throwable t) { }
@@ -439,9 +465,11 @@ public class PlaybackService extends Service {
             return START_STICKY;
         }
         if (ACTION_MINI.equals(a)) { syncMini(); return START_STICKY; }
+        if (ACTION_RESTORE.equals(a)) { restoreSession(); return START_STICKY; }
         if (ACTION_PLAY.equals(a)) {
             String path = intent.getStringExtra(PATH);
             String title = intent.getStringExtra(TITLE);
+            String feed = intent.getStringExtra(FEED);
             if (path == null) { stopSelf(); return START_NOT_STICKY; }
             stop();
             try {
@@ -457,12 +485,13 @@ public class PlaybackService extends Service {
                 wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "JMarronePods");
                 wl.acquire();
                 curPath = path;
-                p.edit().putString("np_path", path).putString("np_title", title == null ? "" : title).putString("np_state", "playing").commit();
+                String keepFeed = feed == null || feed.length() == 0 ? p.getString("np_feed", "") : feed;
+                p.edit().putString("np_path", path).putString("np_title", title == null ? "" : title).putString("np_feed", keepFeed).putString("np_state", "playing").commit();
                 mp.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
                     public void onCompletion(MediaPlayer m) {
                         try { prefs().edit().putLong("pos:" + curPath, 0).putString("np_state", "stopped").putBoolean("done:" + curPath, true).commit(); } catch (Throwable t) { }
                         removeMini();
-                        h.removeCallbacks(saver); h.removeCallbacks(tick); h.removeCallbacks(sleeper);
+                        h.removeCallbacks(saver); h.removeCallbacks(tick); h.removeCallbacks(sleeper); h.removeCallbacks(miniTick);
                         abandonFocus();
                         try { if (mp != null) { mp.release(); } } catch (Throwable t) { }
                         mp = null;
@@ -476,14 +505,71 @@ public class PlaybackService extends Service {
                 mp.start();
                 applySpeed();
                 goFg(title);
-                h.removeCallbacks(saver); h.postDelayed(saver, 5000);
-                h.removeCallbacks(tick); h.postDelayed(tick, 1000);
+                startTicks();
             } catch (Throwable t) {
                 stop(); stopSelf();
             }
             return START_STICKY;
         }
         return START_NOT_STICKY;
+    }
+
+    private void startTicks() {
+        h.removeCallbacks(saver); h.postDelayed(saver, 5000);
+        h.removeCallbacks(tick); h.postDelayed(tick, 1000);
+        h.removeCallbacks(miniTick); h.postDelayed(miniTick, 1000);
+    }
+
+    // explicit Stop (notification button, app menu): forget the session so nothing restores
+    private void clearNowPlaying() {
+        try { prefs().edit().remove("np_path").remove("np_title").remove("np_feed").putString("np_state", "stopped").commit(); } catch (Throwable t) { }
+    }
+
+    // app reopened after the system killed the service: come back on the same episode
+    // at the same timepoint, playing again if it was playing, paused if it was paused
+    private void restoreSession() {
+        SharedPreferences p = prefs();
+        String path = p.getString("np_path", "");
+        String state = p.getString("np_state", "stopped");
+        if (path.length() == 0 || "stopped".equals(state)) return;
+        if (mp != null) return;
+        try {
+            if (!new java.io.File(path).exists()) { clearNowPlaying(); stopSelf(); return; }
+            mp = new MediaPlayer();
+            mp.setAudioStreamType(AudioManager.STREAM_MUSIC);
+            mp.setDataSource(path);
+            mp.prepare();
+            long saved = p.getLong("pos:" + path, 0);
+            if (saved > 1000 && saved < mp.getDuration() - 2000) mp.seekTo((int) saved);
+            curPath = path;
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "JMarronePods");
+            wl.acquire();
+            mp.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+                public void onCompletion(MediaPlayer m) {
+                    try { prefs().edit().putLong("pos:" + curPath, 0).putString("np_state", "stopped").putBoolean("done:" + curPath, true).commit(); } catch (Throwable t) { }
+                    removeMini();
+                    h.removeCallbacks(saver); h.removeCallbacks(tick); h.removeCallbacks(sleeper); h.removeCallbacks(miniTick);
+                    abandonFocus();
+                    try { if (mp != null) { mp.release(); } } catch (Throwable t) { }
+                    mp = null;
+                    try { if (wl != null && wl.isHeld()) wl.release(); } catch (Throwable t) { }
+                    wl = null;
+                    endFg();
+                    stopSelf();
+                }
+            });
+            if ("playing".equals(state)) {
+                requestFocus();
+                mp.start();
+                applySpeed();
+            }
+            goFg(p.getString("np_title", ""));
+            startTicks();
+            syncMini();
+        } catch (Throwable t) {
+            stop(); stopSelf();
+        }
     }
 
     private SharedPreferences prefs() { return getSharedPreferences(PREFS, MODE_PRIVATE); }
@@ -498,7 +584,7 @@ public class PlaybackService extends Service {
 
     private void stop() {
         savePos();
-        h.removeCallbacks(saver); h.removeCallbacks(tick); h.removeCallbacks(sleeper);
+        h.removeCallbacks(saver); h.removeCallbacks(tick); h.removeCallbacks(sleeper); h.removeCallbacks(miniTick);
         abandonFocus();
         try { if (mp != null) { if (mp.isPlaying()) mp.stop(); mp.release(); } } catch (Throwable t) { }
         mp = null;
@@ -506,6 +592,5 @@ public class PlaybackService extends Service {
         wl = null;
         endFg();
         removeMini();
-        try { prefs().edit().putString("np_state", "stopped").commit(); } catch (Throwable t) { }
     }
 }

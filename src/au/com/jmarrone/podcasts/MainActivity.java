@@ -94,6 +94,18 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refresh();
+        try {
+            android.content.SharedPreferences sp = Pod.prefs(this);
+            String st = sp.getString("np_state", "stopped");
+            if (!"stopped".equals(st) && sp.getString("np_path", "").length() > 0 && !PlaybackService.alive) {
+                startService(new Intent(this, PlaybackService.class).setAction(PlaybackService.ACTION_RESTORE));
+            }
+        } catch (Throwable t) { }
+        try {
+            android.content.SharedPreferences sp2 = Pod.prefs(this);
+            if (sp2.getBoolean("miniPlayer", false) && sp2.getString("np_title", "").length() > 0)
+                startService(new Intent(this, PlaybackService.class).setAction(PlaybackService.ACTION_MINI));
+        } catch (Throwable t) { }
         // one-time: older versions set durAuto flags before the sync could work, which
         // blocked every retry; clear them so the new bounded retry takes over
         if (!Pod.prefs(this).getBoolean("durFix", false)) {
@@ -123,9 +135,6 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        if (isFinishing()) {
-            try { startService(new Intent(this, PlaybackService.class).setAction(PlaybackService.ACTION_STOP)); } catch (Throwable t) { }
-        }
         super.onDestroy();
     }
 

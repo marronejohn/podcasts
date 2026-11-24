@@ -151,7 +151,8 @@ public class Pod {
                             // nothing playing: relaunch the last episode from its saved position
                             i2 = new android.content.Intent(a, PlaybackService.class).setAction(PlaybackService.ACTION_PLAY)
                                 .putExtra(PlaybackService.PATH, sp.getString("np_path", ""))
-                                .putExtra(PlaybackService.TITLE, sp.getString("np_title", ""));
+                                .putExtra(PlaybackService.TITLE, sp.getString("np_title", ""))
+                                .putExtra(PlaybackService.FEED, sp.getString("np_feed", ""));
                         } else {
                             String act;
                             if (which == 0) act = "playing".equals(sp.getString("np_state", "stopped")) ? PlaybackService.ACTION_PAUSE : PlaybackService.ACTION_RESUME;
@@ -187,7 +188,11 @@ public class Pod {
             String np = sp.getString("np_path", "");
             String rem = PlaybackService.remainingFrom(sp.getLong("dur:" + np, 0), sp.getLong("pos:" + np, 0));
             String mark = "playing".equals(st) ? "\u25B6 " : ("paused".equals(st) ? "\u23F8 " : "\u25A0 ");
-            String tail = "stopped".equals(st) ? (rem.length() > 0 ? "   - tap Play to resume at " + rem : "   - tap Play to start again") : (rem.length() > 0 ? "   " + rem + " left" : "");
+            boolean done = np.length() > 0 && sp.getBoolean("done:" + np, false);
+            String tail;
+            if ("stopped".equals(st)) {
+                tail = done ? "   - finished - tap Play to start again" : (rem.length() > 0 ? "   - tap Play to resume at " + rem : "   - tap Play to start again");
+            } else tail = rem.length() > 0 ? "   " + rem + " left" : "";
             tv.setText(mark + title + tail);
             android.widget.Button pb = (android.widget.Button) bar.findViewById(9);
             if (pb != null) pb.setText("playing".equals(st) ? "Pause" : "Play");
