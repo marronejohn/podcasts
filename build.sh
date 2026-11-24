@@ -22,5 +22,5 @@ out.writestr('classes.dex', open('dex/classes.dex','rb').read())
 out.close()
 PY2
 $BT/zipalign -f 4 out.apk aligned.apk
-$BT/apksigner sign --ks pod.keystore --ks-pass env:KS_PASS --out Podcasts_v1.11.apk aligned.apk
-$BT/apksigner verify --print-certs Podcasts_v1.11.apk
+$BT/apksigner sign --ks pod.keystore --ks-pass env:KS_PASS --out Podcasts_v1.12.apk aligned.apk
+$BT/apksigner verify --print-certs Podcasts_v1.12.apk

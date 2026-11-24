@@ -134,8 +134,8 @@ public class Pod {
         tv.setTextSize(13);
         tv.setMaxLines(2);
         bar.addView(tv, new android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        String[] labels = {"Play", "+30 sec", "Stop"};
-        for (int i = 0; i < 3; i++) {
+        String[] labels = {"Play", "-10 sec", "+10 sec", "Stop"};
+        for (int i = 0; i < 4; i++) {
             android.widget.Button b = new android.widget.Button(a);
             b.setText(labels[i]);
             b.setTextSize(12);
@@ -148,10 +148,11 @@ public class Pod {
                         android.content.SharedPreferences sp = a.getSharedPreferences(PlaybackService.PREFS, android.content.Context.MODE_PRIVATE);
                         String act;
                         if (which == 0) act = "playing".equals(sp.getString("np_state", "stopped")) ? PlaybackService.ACTION_PAUSE : PlaybackService.ACTION_RESUME;
-                        else if (which == 1) act = PlaybackService.ACTION_SKIP;
+                        else if (which == 1 || which == 2) act = PlaybackService.ACTION_SKIP;
                         else act = PlaybackService.ACTION_STOP;
                         android.content.Intent i2 = new android.content.Intent(a, PlaybackService.class).setAction(act);
-                        if (which == 1) i2.putExtra(PlaybackService.SKIP, 30);
+                        if (which == 1) i2.putExtra(PlaybackService.SKIP, -10);
+                        if (which == 2) i2.putExtra(PlaybackService.SKIP, 10);
                         a.startService(i2);
                         updateMiniBar(a, (android.view.View) v.getParent());
                     } catch (Throwable t) { }

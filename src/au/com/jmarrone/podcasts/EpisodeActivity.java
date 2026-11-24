@@ -131,6 +131,29 @@ public class EpisodeActivity extends Activity {
     private void load() {
         eps = Sync.readIndex(this, slug);
         adapter.notifyDataSetChanged();
+        maybeAutoDurations();
+    }
+
+    // if this show's cached index has no episode lengths yet, refresh its feed once in the
+    // background so durations appear without the user tapping Refresh from feed now
+    private void maybeAutoDurations() {
+        try {
+            if (eps == null || eps.size() == 0) return;
+            boolean any = false;
+            for (Episode e : eps) if (e.seconds > 0) { any = true; break; }
+            if (any) return;
+            String key = "durAuto:" + slug;
+            if (Pod.prefs(this).getBoolean(key, false)) return;
+            if (!Pod.networkOk(this)) return;
+            Pod.prefs(this).edit().putBoolean(key, true).commit();
+            final String t = showTitle, u = showUrl;
+            new Thread(new Runnable() {
+                public void run() {
+                    try { Sync.syncShow(EpisodeActivity.this, t, u); } catch (Throwable tt) { }
+                    h.post(new Runnable() { public void run() { load(); } });
+                }
+            }).start();
+        } catch (Throwable t) { }
     }
 
     private void tap(int pos) {
