@@ -94,13 +94,9 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refresh();
-        // one-time re-sync after the duration-parser fix so episode lengths fill in
-        if (Pod.prefs(this).getString("lastSync", "").length() > 0 && !Pod.prefs(this).getBoolean("durMig", false)) {
-            Pod.prefs(this).edit().putBoolean("durMig", true).commit();
-            startSync(true);
-        }
         // first-ever open: schedule weekly alarm + try a first sync when on wifi
         if (Pod.prefs(this).getString("lastSync", "").length() == 0 && !syncing) startSync(true);
+        else autoDurations();
         if (barTick == null) barTick = new Runnable() {
             public void run() { if (miniBar != null) Pod.updateMiniBar(MainActivity.this, miniBar); bh.postDelayed(this, 2000); }
         };
@@ -125,6 +121,31 @@ public class MainActivity extends Activity {
     private void refresh() {
         shows = Pod.allShows(this);
         adapter.notifyDataSetChanged();
+    }
+
+    // any show whose stored episodes carry no lengths gets one quiet background feed
+    // refresh so durations are pre-loaded in the rows without any tapping
+    private void autoDurations() {
+        if (syncing || !Pod.networkOk(this)) return;
+        final ArrayList<String[]> need = new ArrayList<String[]>();
+        for (String[] s : shows) {
+            String key = "durAuto:" + Pod.slug(s[0]);
+            if (Pod.prefs(this).getBoolean(key, false)) continue;
+            boolean any = false;
+            for (Episode e : Sync.readIndex(this, Pod.slug(s[0]))) if (e.seconds > 0) { any = true; break; }
+            if (!any) need.add(s);
+        }
+        if (need.isEmpty()) return;
+        for (String[] s : need) Pod.prefs(this).edit().putBoolean("durAuto:" + Pod.slug(s[0]), true).commit();
+        syncing = true;
+        new Thread(new Runnable() {
+            public void run() {
+                for (String[] s : need) {
+                    try { Sync.syncShow(MainActivity.this, s[0], s[2]); } catch (Throwable t) { }
+                }
+                runOnUiThread(new Runnable() { public void run() { syncing = false; refresh(); } });
+            }
+        }).start();
     }
 
     private void startSync(final boolean silentIfNoWifi) {

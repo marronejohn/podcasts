@@ -146,19 +146,29 @@ public class Pod {
                 public void onClick(android.view.View v) {
                     try {
                         android.content.SharedPreferences sp = a.getSharedPreferences(PlaybackService.PREFS, android.content.Context.MODE_PRIVATE);
-                        String act;
-                        if (which == 0) act = "playing".equals(sp.getString("np_state", "stopped")) ? PlaybackService.ACTION_PAUSE : PlaybackService.ACTION_RESUME;
-                        else if (which == 1 || which == 2) act = PlaybackService.ACTION_SKIP;
-                        else act = PlaybackService.ACTION_STOP;
-                        android.content.Intent i2 = new android.content.Intent(a, PlaybackService.class).setAction(act);
-                        if (which == 1) i2.putExtra(PlaybackService.SKIP, -10);
-                        if (which == 2) i2.putExtra(PlaybackService.SKIP, 10);
+                        android.content.Intent i2;
+                        if (which == 0 && "stopped".equals(sp.getString("np_state", "stopped"))) {
+                            // nothing playing: relaunch the last episode from its saved position
+                            i2 = new android.content.Intent(a, PlaybackService.class).setAction(PlaybackService.ACTION_PLAY)
+                                .putExtra(PlaybackService.PATH, sp.getString("np_path", ""))
+                                .putExtra(PlaybackService.TITLE, sp.getString("np_title", ""));
+                        } else {
+                            String act;
+                            if (which == 0) act = "playing".equals(sp.getString("np_state", "stopped")) ? PlaybackService.ACTION_PAUSE : PlaybackService.ACTION_RESUME;
+                            else if (which == 1 || which == 2) act = PlaybackService.ACTION_SKIP;
+                            else act = PlaybackService.ACTION_STOP;
+                            i2 = new android.content.Intent(a, PlaybackService.class).setAction(act);
+                            if (which == 1) i2.putExtra(PlaybackService.SKIP, -10);
+                            if (which == 2) i2.putExtra(PlaybackService.SKIP, 10);
+                        }
                         a.startService(i2);
                         updateMiniBar(a, (android.view.View) v.getParent());
                     } catch (Throwable t) { }
                 }
             });
             if (i == 0) b.setId(9);
+            if (i == 1) b.setId(10);
+            if (i == 2) b.setId(11);
             bar.addView(b);
         }
         bar.setVisibility(android.view.View.GONE);
@@ -169,14 +179,23 @@ public class Pod {
         try {
             android.content.SharedPreferences sp = a.getSharedPreferences(PlaybackService.PREFS, android.content.Context.MODE_PRIVATE);
             String st = sp.getString("np_state", "stopped");
+            String title = sp.getString("np_title", "");
             android.widget.TextView tv = (android.widget.TextView) bar.findViewById(7);
             if (tv == null) return;
-            if ("stopped".equals(st)) { bar.setVisibility(android.view.View.GONE); return; }
+            if (title.length() == 0) { bar.setVisibility(android.view.View.GONE); return; }
             bar.setVisibility(android.view.View.VISIBLE);
-            String rem = PlaybackService.remainingFrom(sp.getLong("dur:" + sp.getString("np_path", ""), 0), sp.getLong("pos:" + sp.getString("np_path", ""), 0));
-            tv.setText(("playing".equals(st) ? "\u25B6 " : "\u23F8 ") + sp.getString("np_title", "") + (rem.length() > 0 ? "   " + rem + " left" : ""));
+            String np = sp.getString("np_path", "");
+            String rem = PlaybackService.remainingFrom(sp.getLong("dur:" + np, 0), sp.getLong("pos:" + np, 0));
+            String mark = "playing".equals(st) ? "\u25B6 " : ("paused".equals(st) ? "\u23F8 " : "\u25A0 ");
+            String tail = "stopped".equals(st) ? (rem.length() > 0 ? "   - tap Play to resume at " + rem : "   - tap Play to start again") : (rem.length() > 0 ? "   " + rem + " left" : "");
+            tv.setText(mark + title + tail);
             android.widget.Button pb = (android.widget.Button) bar.findViewById(9);
             if (pb != null) pb.setText("playing".equals(st) ? "Pause" : "Play");
+            boolean active = !"stopped".equals(st);
+            android.widget.Button b1 = (android.widget.Button) bar.findViewById(10);
+            android.widget.Button b2 = (android.widget.Button) bar.findViewById(11);
+            if (b1 != null) b1.setEnabled(active);
+            if (b2 != null) b2.setEnabled(active);
         } catch (Throwable t) { }
     }
 }
