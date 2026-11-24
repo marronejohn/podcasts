@@ -96,7 +96,7 @@ public class Sync {
             } else {
                 e.local = f.exists() ? fn : null;
             }
-            indexLines.append(e.title).append('\t').append(e.date).append('\t').append(e.url).append('\t').append(e.local == null ? "" : e.local).append('\n');
+            indexLines.append(e.title).append('\t').append(e.date).append('\t').append(e.url).append('\t').append(e.local == null ? "" : e.local).append('\t').append(e.seconds).append('\t').append(e.est ? 1 : 0).append('\n');
         }
         // write index (tab-separated, simple)
         FileOutputStream fo = new FileOutputStream(new File(dir, slug + ".index"));
@@ -145,6 +145,8 @@ public class Sync {
                     e.title = parts[0]; e.date = parts[1]; e.url = parts[2];
                     e.local = parts[3].length() == 0 ? null : parts[3];
                     e.dateMs = FeedParser.parseDate(parts[1]);
+                    if (parts.length >= 5) { try { e.seconds = Integer.parseInt(parts[4].trim()); } catch (Throwable t2) { } }
+                    if (parts.length >= 6 && "1".equals(parts[5].trim())) e.est = true;
                     out.add(e);
                 }
             }

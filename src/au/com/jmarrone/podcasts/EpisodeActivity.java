@@ -142,14 +142,19 @@ public class EpisodeActivity extends Activity {
             boolean any = false;
             for (Episode e : eps) if (e.seconds > 0) { any = true; break; }
             if (any) return;
-            String key = "durAuto:" + slug;
-            if (Pod.prefs(this).getBoolean(key, false)) return;
+            if (Pod.prefs(this).getInt("durTries:" + slug, 0) >= 3) return;
             if (!Pod.networkOk(this)) return;
-            Pod.prefs(this).edit().putBoolean(key, true).commit();
             final String t = showTitle, u = showUrl;
+            final android.content.SharedPreferences sp = Pod.prefs(this);
+            final String sl = slug;
+            final android.app.Activity act = this;
             new Thread(new Runnable() {
                 public void run() {
                     try { Sync.syncShow(EpisodeActivity.this, t, u); } catch (Throwable tt) { }
+                    boolean ok = false;
+                    for (Episode e : Sync.readIndex(act, sl)) if (e.seconds > 0) { ok = true; break; }
+                    if (ok) sp.edit().putBoolean("durAuto:" + sl, true).remove("durTries:" + sl).commit();
+                    else sp.edit().putInt("durTries:" + sl, sp.getInt("durTries:" + sl, 0) + 1).commit();
                     h.post(new Runnable() { public void run() { load(); } });
                 }
             }).start();

@@ -94,6 +94,17 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refresh();
+        // one-time: older versions set durAuto flags before the sync could work, which
+        // blocked every retry; clear them so the new bounded retry takes over
+        if (!Pod.prefs(this).getBoolean("durFix", false)) {
+            Pod.prefs(this).edit().putBoolean("durFix", true).commit();
+            try {
+                android.content.SharedPreferences.Editor ed = Pod.prefs(this).edit();
+                for (String k : Pod.prefs(this).getAll().keySet())
+                    if (k.startsWith("durAuto:") || k.startsWith("durTries:")) ed.remove(k);
+                ed.commit();
+            } catch (Throwable t) { }
+        }
         // first-ever open: schedule weekly alarm + try a first sync when on wifi
         if (Pod.prefs(this).getString("lastSync", "").length() == 0 && !syncing) startSync(true);
         else autoDurations();
@@ -136,12 +147,20 @@ public class MainActivity extends Activity {
             if (!any) need.add(s);
         }
         if (need.isEmpty()) return;
-        for (String[] s : need) Pod.prefs(this).edit().putBoolean("durAuto:" + Pod.slug(s[0]), true).commit();
         syncing = true;
+        final android.content.SharedPreferences sp = Pod.prefs(this);
+        final android.app.Activity act = this;
         new Thread(new Runnable() {
             public void run() {
                 for (String[] s : need) {
+                    String slug = Pod.slug(s[0]);
                     try { Sync.syncShow(MainActivity.this, s[0], s[2]); } catch (Throwable t) { }
+                    // flag "done" only when the sync actually produced lengths; otherwise
+                    // count a try and let the next open retry, up to 3
+                    boolean ok = false;
+                    for (Episode e : Sync.readIndex(act, slug)) if (e.seconds > 0) { ok = true; break; }
+                    if (ok) sp.edit().putBoolean("durAuto:" + slug, true).remove("durTries:" + slug).commit();
+                    else sp.edit().putInt("durTries:" + slug, sp.getInt("durTries:" + slug, 0) + 1).commit();
                 }
                 runOnUiThread(new Runnable() { public void run() { syncing = false; refresh(); } });
             }
