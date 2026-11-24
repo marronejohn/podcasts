@@ -118,4 +118,64 @@ public class Pod {
         }
         return connected && !cm.isActiveNetworkMetered();
     }
+
+    // in-app mini player bar: title + time left on the left, Pause/Play, +30 sec, Stop on the right
+    public static android.view.View miniBar(final android.app.Activity a) {
+        int pad = (int) (a.getResources().getDisplayMetrics().density * 8);
+        android.widget.LinearLayout bar = new android.widget.LinearLayout(a);
+        bar.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        bar.setPadding(pad, pad / 2, pad, pad / 2);
+        bar.setBackgroundColor(0xff202124);
+        bar.setId(8);
+        final android.widget.TextView tv = new android.widget.TextView(a);
+        tv.setId(7);
+        tv.setTextColor(0xffffffff);
+        tv.setTextSize(13);
+        tv.setMaxLines(2);
+        bar.addView(tv, new android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        String[] labels = {"Play", "+30 sec", "Stop"};
+        for (int i = 0; i < 3; i++) {
+            android.widget.Button b = new android.widget.Button(a);
+            b.setText(labels[i]);
+            b.setTextSize(12);
+            b.setMinHeight(0);
+            b.setMinWidth(0);
+            final int which = i;
+            b.setOnClickListener(new android.view.View.OnClickListener() {
+                public void onClick(android.view.View v) {
+                    try {
+                        android.content.SharedPreferences sp = a.getSharedPreferences(PlaybackService.PREFS, android.content.Context.MODE_PRIVATE);
+                        String act;
+                        if (which == 0) act = "playing".equals(sp.getString("np_state", "stopped")) ? PlaybackService.ACTION_PAUSE : PlaybackService.ACTION_RESUME;
+                        else if (which == 1) act = PlaybackService.ACTION_SKIP;
+                        else act = PlaybackService.ACTION_STOP;
+                        android.content.Intent i2 = new android.content.Intent(a, PlaybackService.class).setAction(act);
+                        if (which == 1) i2.putExtra(PlaybackService.SKIP, 30);
+                        a.startService(i2);
+                        updateMiniBar(a, (android.view.View) v.getParent());
+                    } catch (Throwable t) { }
+                }
+            });
+            if (i == 0) b.setId(9);
+            bar.addView(b);
+        }
+        bar.setVisibility(android.view.View.GONE);
+        return bar;
+    }
+
+    public static void updateMiniBar(android.app.Activity a, android.view.View bar) {
+        try {
+            android.content.SharedPreferences sp = a.getSharedPreferences(PlaybackService.PREFS, android.content.Context.MODE_PRIVATE);
+            String st = sp.getString("np_state", "stopped");
+            android.widget.TextView tv = (android.widget.TextView) bar.findViewById(7);
+            if (tv == null) return;
+            if ("stopped".equals(st)) { bar.setVisibility(android.view.View.GONE); return; }
+            bar.setVisibility(android.view.View.VISIBLE);
+            String rem = PlaybackService.remainingFrom(sp.getLong("dur:" + sp.getString("np_path", ""), 0), sp.getLong("pos:" + sp.getString("np_path", ""), 0));
+            tv.setText(("playing".equals(st) ? "\u25B6 " : "\u23F8 ") + sp.getString("np_title", "") + (rem.length() > 0 ? "   " + rem + " left" : ""));
+            android.widget.Button pb = (android.widget.Button) bar.findViewById(9);
+            if (pb != null) pb.setText("playing".equals(st) ? "Pause" : "Play");
+        } catch (Throwable t) { }
+    }
 }

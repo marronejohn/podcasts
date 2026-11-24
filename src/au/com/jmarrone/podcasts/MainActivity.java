@@ -27,6 +27,9 @@ public class MainActivity extends Activity {
     private ShowAdapter adapter;
     private ArrayList<String[]> shows;
     private boolean syncing = false;
+    private View miniBar;
+    private android.os.Handler bh = new android.os.Handler();
+    private Runnable barTick;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -36,7 +39,12 @@ public class MainActivity extends Activity {
             try { requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 1); } catch (Throwable t) { }
         }
         list = new ListView(this);
-        setContentView(list);
+        android.widget.LinearLayout root = new android.widget.LinearLayout(this);
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.addView(list, new android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        miniBar = Pod.miniBar(this);
+        root.addView(miniBar, new android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT));
+        setContentView(root);
         adapter = new ShowAdapter();
         list.setAdapter(adapter);
         list.setOnItemClickListener(new AdapterView.OnItemClickListener() {
@@ -86,8 +94,24 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refresh();
+        // one-time re-sync after the duration-parser fix so episode lengths fill in
+        if (Pod.prefs(this).getString("lastSync", "").length() > 0 && !Pod.prefs(this).getBoolean("durMig", false)) {
+            Pod.prefs(this).edit().putBoolean("durMig", true).commit();
+            startSync(true);
+        }
         // first-ever open: schedule weekly alarm + try a first sync when on wifi
         if (Pod.prefs(this).getString("lastSync", "").length() == 0 && !syncing) startSync(true);
+        if (barTick == null) barTick = new Runnable() {
+            public void run() { if (miniBar != null) Pod.updateMiniBar(MainActivity.this, miniBar); bh.postDelayed(this, 2000); }
+        };
+        if (miniBar != null) Pod.updateMiniBar(this, miniBar);
+        bh.removeCallbacks(barTick); bh.postDelayed(barTick, 2000);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        bh.removeCallbacks(barTick);
     }
 
     @Override

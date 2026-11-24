@@ -33,6 +33,8 @@ public class EpisodeActivity extends Activity {
     private Handler h = new Handler();
     private String showTitle, showUrl, slug;
     private int playingPos = -1;
+    private View miniBar;
+    private Runnable barTick;
 
     // keeps the "time remaining" line fresh while the screen is open
     private Runnable uiTick = new Runnable() {
@@ -54,7 +56,12 @@ public class EpisodeActivity extends Activity {
         adapter = new EpAdapter();
         ListView lv = new ListView(this);
         lv.setAdapter(adapter);
-        setContentView(lv);
+        android.widget.LinearLayout root = new android.widget.LinearLayout(this);
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.addView(lv, new android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        miniBar = Pod.miniBar(this);
+        root.addView(miniBar, new android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT));
+        setContentView(root);
         lv.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             public void onItemClick(AdapterView<?> p, View v, int pos, long id) { tap(pos); }
         });
@@ -107,12 +114,18 @@ public class EpisodeActivity extends Activity {
         super.onResume();
         load();
         h.post(uiTick);
+        if (barTick == null) barTick = new Runnable() {
+            public void run() { if (miniBar != null) Pod.updateMiniBar(EpisodeActivity.this, miniBar); h.postDelayed(this, 2000); }
+        };
+        if (miniBar != null) Pod.updateMiniBar(this, miniBar);
+        h.removeCallbacks(barTick); h.postDelayed(barTick, 2000);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         h.removeCallbacks(uiTick);
+        if (barTick != null) h.removeCallbacks(barTick);
     }
 
     private void load() {
@@ -327,7 +340,7 @@ public class EpisodeActivity extends Activity {
             }
             t1.setText(mark + e.title);
             String when = e.dateMs > 0 ? new SimpleDateFormat("EEE d MMM yyyy", Locale.ENGLISH).format(new Date(e.dateMs)) : e.date;
-            String dur = e.seconds > 0 ? "  |  " + ((e.seconds + 30) / 60) + " min" : "";
+            String dur = e.seconds > 0 ? "  |  " + (e.est ? "~" : "") + ((e.seconds + 30) / 60) + " min" : "";
             String tail = e.local == null ? "  |  not saved"
                 : (played.length() > 0 ? played : (mark.length() == 0 ? "  |  saved - tap to play, tap again to pause" : ""));
             t2.setText(when + dur + live + tail);

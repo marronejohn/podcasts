@@ -19,11 +19,12 @@ public class FeedParser {
         int ev = p.getEventType();
         String channelTitleDone = "no";
         boolean inItem = false;
-        String curTitle = null, curDate = null, curUrl = null, curDur = null;
+        String curTitle = null, curDate = null, curUrl = null, curDur = null, curLen = null;
         while (ev != XmlPullParser.END_DOCUMENT) {
             if (ev == XmlPullParser.START_TAG) {
                 String name = p.getName().toLowerCase(Locale.US);
-                if ("item".equals(name)) { inItem = true; curTitle = null; curDate = null; curUrl = null; curDur = null; }
+                int cx = name.indexOf(':'); if (cx >= 0) name = name.substring(cx + 1);
+                if ("item".equals(name)) { inItem = true; curTitle = null; curDate = null; curUrl = null; curDur = null; curLen = null; }
                 else if ("title".equals(name)) { String t = readText(p); if (!inItem && channelTitleDone.equals("no")) { fp.feedTitle = t; channelTitleDone = "yes"; } else if (inItem) curTitle = t; }
                 else if ("pubdate".equals(name) || "published".equals(name)) { if (inItem) curDate = readText(p); }
                 else if ("duration".equals(name)) { if (inItem) curDur = readText(p); }
@@ -31,7 +32,7 @@ public class FeedParser {
                     if (inItem) {
                         String u = p.getAttributeValue(null, "url");
                         String ty = p.getAttributeValue(null, "type");
-                        if (u != null && (ty == null || ty.contains("audio") || ty.contains("video") || u.contains(".mp3") || u.contains(".m4a") || u.contains(".aac"))) curUrl = u;
+                        if (u != null && (ty == null || ty.contains("audio") || ty.contains("video") || u.contains(".mp3") || u.contains(".m4a") || u.contains(".aac"))) { curUrl = u; String ln = p.getAttributeValue(null, "length"); if (ln != null) curLen = ln; }
                     }
                 }
             } else if (ev == XmlPullParser.END_TAG) {
@@ -45,6 +46,9 @@ public class FeedParser {
                         e.dateMs = parseDate(e.date);
                         e.url = curUrl.trim();
                         e.seconds = parseDuration(curDur);
+                        if (e.seconds <= 0 && curLen != null) {
+                            try { long b = Long.parseLong(curLen.trim()); if (b > 100000) { e.seconds = (int) (b * 8 / 128000); e.est = true; } } catch (Throwable t2) { }
+                        }
                         fp.items.add(e);
                     }
                 }

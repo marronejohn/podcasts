@@ -10,4 +10,5 @@ public class Episode implements Serializable {
     public String url;    // enclosure mp3 url
     public String local;  // local file name once downloaded (null if not)
     public int seconds;   // itunes:duration in seconds, 0 if the feed doesn't give one
+    public boolean est;   // true when seconds came from a file-size estimate, not the feed
 }
